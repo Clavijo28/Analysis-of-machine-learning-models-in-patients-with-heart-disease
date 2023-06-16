@@ -1,0 +1,303 @@
+---
+title: "Assignment_3_final"
+output: html_document
+date: '2022-06-21'
+---
+
+```{r setup, include=FALSE}
+#install.packages("modeldata")
+library(tidyverse)
+library(e1071)
+library(GGally)
+library(ggplot2)
+library(caret)
+library(kernlab)
+library(modeldata)
+
+setwd("C:/Users/Christian/Desktop/Assignment_3_PA")
+getwd()
+
+heart_sample <- read.csv("Subdata.set.heart.csv")
+
+ggplot(data = heart_sample, aes(x = target, y = ..count.., fill = target)) +
+geom_bar() +
+labs(title = "Disease distribution'") +
+scale_fill_manual(values = c("darkgreen", "orangered2"), 
+                  labels = c("Disease", "No disease")) +
+theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+
+# Linear Kernels ================================================================
+
+data_h <- heart_sample %>% mutate(cp = ifelse(cp=="atypical angina",-1,ifelse(cp=="non-anginal pain",0,1))) %>%
+  mutate(exang = ifelse(exang=="FALSE",0,1)) %>%
+  mutate(restwm = ifelse(restwm=="akinesis or dyskmem",0,1)) %>%
+  mutate(target = as.factor(ifelse(target=="no disease",0,1)))
+
+dat.d1 <- sample(1:nrow(data_h),size=nrow(data_h)*0.7,replace = FALSE) #random selection of 70% data.
+train.data_1 <- data_h[dat.d1,] # 70% training data
+test.data_1 <- data_h[-dat.d1,] # remaining 30% test data
+
+svm.model_1 <- svm(target ~ ., data = test.data_1, kernel = "linear")
+svm.pred_1 = predict(svm.model_1,test.data_1[, -8])
+svm.results_1 = confusionMatrix(table(predicted = svm.pred_1, actual = test.data_1$target))
+svm.results_1
+
+# Parameter tuning – linear kernel
+set.seed(999)
+svm.linear.tune_1 = tune.svm(target~., data=train.data_1,
+ kernel="linear",
+ cost=c(0.001, 0.01, 0.1, 1, 5, 10))
+
+summary(svm.linear.tune_1)
+
+ggplot(data = svm.linear.tune_1$performances, aes(x = cost, y = error)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Error de validación ~ hiperparámetro C") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+modelo <- svm.linear.tune_1$best.model
+summary(modelo)
+
+svm.tune.poly.pred_1 = predict(modelo, newdata=test.data_1[, -8])
+confusionMatrix(svm.tune.poly.pred_1, test.data_1$target)
+
+# Polynomial Kernels ===========================================================
+
+set.seed(999)
+svm.poly.tune_2 = tune.svm(target~., data=train.data_1,
+kernel="polynomial",
+ degree=c(3,4,5), coef0=c(0.001, 0.01, 0.1, 1, 5, 10))
+summary(svm.poly.tune_2)
+
+ggplot(data = svm.poly.tune_2$performances, aes(x = coef0, y = error)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Error de validación ~ hiperparámetro C") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+svm.best.poly = svm.poly.tune_2$best.model
+svm.tune.poly.pred = predict(svm.best.poly, newdata=test.data_1[, -8])
+confusionMatrix(svm.tune.poly.pred, test.data_1$target)
+
+# rbf Kernels ===========================================================
+
+set.seed(999)
+svm.rbf.tune_3 = tune.svm(target~., data=train.data_1,
+ kernel="radial",
+ gamma=c(0.001, 0.1, 0.5, 1, 5, 10))
+summary(svm.rbf.tune_3)
+
+ggplot(data = svm.rbf.tune_3$performances, aes(x = gamma, y = error)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Validation error Hyperparameter C adjusted") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+svm.best.rbf = svm.rbf.tune_3$best.model
+svm.tune.rbf.pred = predict(svm.best.rbf, newdata=test.data_1[, -8])
+confusionMatrix(svm.tune.rbf.pred, test.data_1$target)
+
+
+```
+```{r}
+
+#install.packages("pscl")
+library(pscl)
+library(ROCR)
+
+data_hscale <- data_h
+
+data_hscale$cp <- scale(data_hscale$cp, scale = TRUE, center = TRUE)
+data_hscale$exang <- scale(data_hscale$exang, scale = TRUE, center = TRUE)
+data_hscale$major_vessels <- scale(data_hscale$major_vessels, scale = TRUE, center = TRUE)
+data_hscale$oldpeak <- scale(data_hscale$oldpeak, scale = TRUE, center = TRUE)
+data_hscale$restwm <- scale(data_hscale$restwm, scale = TRUE, center = TRUE)
+data_hscale$thalach <- scale(data_hscale$thalach, scale = TRUE, center = TRUE)
+
+summary(data_hscale)
+
+# Split data into training and test datasets. We will use 70%/30% split
+# again.
+set.seed(123)
+
+train.data_sc <- data_hscale[dat.d1,] # 70% training data
+test.data_sc <- data_hscale[-dat.d1,] # remaining % test data
+
+model <- glm(target ~., family = binomial(link='logit'),data=train.data_sc)
+summary(model)
+confint(model)
+anova(model, test="Chisq")
+
+pR2(model)
+
+fitted.results <- predict(model, newdata=test.data_sc, type='response')
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+confusionMatrix(as.factor(fitted.results), as.factor(test.data_sc[, 7]))
+
+#===============================================================================
+library(scales)
+newdata <- heart_sample %>% select(target,thalach,restwm) %>%
+  mutate(target = ifelse(target=="no disease",0,1)) %>%
+  mutate(new_restwm = restwm)
+
+newdata <- head(newdata,114)
+
+modelo_final <- glm(target ~ new_restwm + thalach,
+                    data = newdata,
+                    family = binomial)
+summary(modelo_final)
+
+library(ggplot2)
+# Para graficar los valores en ggplot junto con la curva, la variable respuesta
+# tiene que ser numérica en lugar de factor.
+
+newdata$target <- as.numeric(as.character(newdata$target))
+
+# Se crea un dataframe que contenga la probabilidad de que se necesiten clases
+# de repaso dada una determinada nota en el examen de lectura y siendo hombre.
+# Vector con nuevos valores interpolados en el rango de observaciones.
+
+c <- (max(newdata$thalach)-min(newdata$thalach))/114
+
+newvalues_thalach <- seq(from = min(newdata$thalach),
+                             to = max(newdata$thalach), by = 1)
+new_restwm <- as.factor(rep(x = "akinesis or dyskmem", length(newvalues_thalach)))
+
+# Predicciones de los nuevos puntos según el modelo. type = "response" devuelve
+# las predicciones en forma de probabilidad en lugar de en log_ODDs.
+
+predicciones <- predict(object = modelo_final,
+                        newdata_1=data.frame(thalach = newvalues_thalach,
+                                           new_restwm = new_restwm),
+                        type = "response")
+
+# Se crea un data frame con los nuevos puntos y sus predicciones para graficar
+# la curva.
+
+length(newvalues_thalach)
+length(new_restwm)
+length(predicciones)
+
+datos_curva_akinesis.or.dyskmem <- data.frame(thalach = head(newvalues_thalach,114), 
+                                 new_restwm = head(new_restwm,114),
+                                 target = head(predicciones,114))
+
+# Mismo proceso para mujeres (sexo = 0).
+newvalues_thalach <- seq(from = min(newdata$thalach),
+                             to = max(newdata$thalach), by = 0.76)
+
+new_restwm <- as.factor(rep(x = "moderate or severe", length(newvalues_thalach)))
+
+predicciones <- predict(object = modelo_final,
+                        newdata_1 = data.frame(thalach = newvalues_thalach,
+                                           new_restwm = new_restwm),
+                        type = "response")
+
+datos_curva_moderate.or.severe <- data.frame(thalach = head(newvalues_thalach,114), 
+                                 new_restwm = head(new_restwm,114),
+                                 target = head(predicciones,114))
+
+# Se unifican los dos dataframe.
+datos_curva <- rbind(datos_curva_akinesis.or.dyskmem, datos_curva_moderate.or.severe)
+
+ggplot(data = newdata, aes(x = thalach, y = as.numeric(target),
+                         color = new_restwm)) +
+    geom_point() +
+    geom_line(data = datos_curva, aes(y = target)) + 
+    geom_line(data = datos_curva, aes(y = target)) +
+    theme_bw() +
+    labs(title = "Disease depending on restwm and thalach",
+         y = "P(clase de repaso)") +
+    theme(plot.title = element_text(size = 20))
+
+```
+```{r}
+# Reparto de datos en train y test
+# ==============================================================================
+#install.packages("neuralnet")
+
+library(neuralnet)
+
+x <- data_h %>% mutate(cp = as.numeric(rescale(cp,to=c(0,10))),
+                       exang = as.numeric(rescale(exang,to=c(0,10))),
+                       major_vessels = as.numeric(rescale(major_vessels,to=c(0,10))),
+                       oldpeak= as.numeric(rescale(oldpeak,to=c(0,10))),
+                       restwm = as.numeric(rescale(restwm,to=c(0,10))),
+                       target = heart_sample$target) %>% select(target,restwm,oldpeak,major_vessels,exang,cp)
+
+str(x)
+
+x[,1] = sapply(x[,1],switch,"no disease"=0,"disease"=1)
+x[,1] #0:benign(B), 1:maligant(M)
+
+
+str(x)
+
+
+newdata <- sample(2, nrow(x), replace = TRUE, prob = c(0.75, 0.25))
+training1 <- x[newdata==1,]
+testing1 <- x[newdata==2,]
+
+str(training1)
+
+#dat.NN <- sample(1:nrow(x),size=nrow(x)*0.70,replace = FALSE) #random selection of 70% data.
+#train.data_NN <- x[dat.NN,] # 70% training data
+#test.data_NN <- x[-dat.NN,] # remaining 30% test data
+
+library(neuralnet)
+
+set.seed(333)
+n3 <- neuralnet(target~.,
+ data = training1,
+ hidden = 3,
+ err.fct = "ce",
+ linear.output = FALSE,
+ stepmax=1e7)
+plot(n3)
+
+output3 <- compute(n3, testing1[,-1])
+head(output3$net.result)
+head(training1[1,])
+
+results3 <- data.frame(data_trained=testing1$target, Prediction=output3$net.result)
+results3
+
+roundedresults3 <- sapply(results3, round, digits=0)
+roundedresults3
+
+actual1 <- round(testing1$target, digits = 0)
+prediction3 <- round(output3$net.result, digits = 0)
+mtab3 <- table(actual1,prediction3)
+mtab3
+confusionMatrix(mtab3)
+
+#===============================================================================
+
+n25 <- neuralnet(target~., data = training1, hidden = c(2,5),
+                 err.fct = "ce", linear.output = FALSE,threshold = 0.2, stepmax = 100000)
+plot(n25)
+# threshold =0.01
+
+output25 <- compute(n25, testing1[,-1])
+head(output25$net.result)
+head(training1[1,])
+
+results25 <- data.frame(DataAsli=testing1$target, Prediksi=output25$net.result)
+results25
+
+roundedresults25 <- sapply(results25, round, digits=0)
+roundedresults25
+
+prediction25 <- round(output25$net.result, digits = 0)
+mtab25 <- table(actual1,prediction25)
+mtab25
+confusionMatrix(mtab25)
+
+```
+```{r}
+R <- data.frame("Model" = c("Decision tree", "support vector machine (RDF kernel)", "logistic regression", "neural networks"), "Accuracy" = c(0.9102,0.9796,0.8612,0.8738), "Kappa" = c(0.8201,0.9589,0.7195,0.7474), "Conversion qualitative variables" = c("no","yes","yes","yes"),"Standardization"=c("no","no","yes","yes"), "hyperparameters"=c("cp = 0.003, maxdeep = 7, minsplit = 6","Kernel = radial, gamma = 10","family = Binomial","hiden = 3, err.fct = ce, stepmax = 1e7"))
+```
